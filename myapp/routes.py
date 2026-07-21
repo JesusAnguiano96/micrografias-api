@@ -1,177 +1,162 @@
-from flask import Blueprint, redirect, url_for, request, jsonify
+from flask import Blueprint, jsonify, request
+from werkzeug.security import generate_password_hash, check_password_hash
+
 from .extensions import db
 from .models import User
-from .models import PlantEntry
-from flask_cors import CORS
-from datetime import datetime
 
-main = Blueprint('main', __name__)
 
-@main.route('/')
+main = Blueprint("main", __name__)
+
+
+@main.route("/", methods=["GET"])
 def index():
+    return jsonify({
+        "message": "Micrograph Analysis System API",
+        "status": "running"
+    }), 200
 
-    return f"<ul>{'funciona'}</ul>"
 
-@main.route('/add', methods=['POST'])
-def add():
-    # Get data from the request
-    data = request.get_json()  # Obtener el objeto JSON de la solicitud
-    email = data['email']
-    # occupation = data['occupation']
-    occupation = 'test'
-    password = data['password']
-    # Check if user with the given email already exists
+@main.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "service": "Micrograph Analysis System API",
+        "status": "ok",
+        "version": "0.1.0"
+    }), 200
+
+
+def _get_json_data():
+    data = request.get_json(silent=True)
+
+    if data is None:
+        return None, (jsonify({
+            "message": "Invalid or missing JSON body"
+        }), 400)
+
+    return data, None
+
+
+def _verify_password(stored_password, provided_password):
+    """
+    Verifica una contraseña.
+
+    Primero intenta validar la contraseña como hash.
+    Si falla, compara contra texto plano para soportar usuarios legados
+    del proyecto original.
+    """
+    try:
+        if check_password_hash(stored_password, provided_password):
+            return True
+    except ValueError:
+        pass
+
+    return stored_password == provided_password
+
+
+def _register_user(data):
+    email = data.get("email")
+    password = data.get("password")
+    occupation = data.get("occupation", "student")
+
+    if not email or not password:
+        return jsonify({
+            "message": "Email and password are required"
+        }), 400
+
     existing_user = User.query.filter_by(email=email).first()
+
     if existing_user:
-        return jsonify({"message": "Email already in use"}), 400
-    # If validation passes, add the user to the database
-    user = User(email=email, password=password, occupation=occupation)
+        return jsonify({
+            "message": "Email already in use"
+        }), 400
+
+    hashed_password = generate_password_hash(password)
+
+    user = User(
+        email=email,
+        password=hashed_password,
+        occupation=occupation
+    )
+
     db.session.add(user)
     db.session.commit()
 
-    # # Return success response
-    return jsonify({"message": "User added successfully"}), 201
-
-@main.route('/userValidation', methods=['POST'])
-def userValidation():
-    # Get data from the request
-    data = request.get_json()
-    email = data['email']
-    password = data['password']
-    
-    # Check if user with the given email exists
-    existing_user = User.query.filter_by(email=email).first()
-        
-    if not existing_user:
-        return jsonify({"message": "User does not exist"}), 404
-
-    # Check if the provided password matches the stored one
-    if existing_user.password != password:
-        return jsonify({"message": "Incorrect password"}), 401
-
-    # If validation passes, return success response
-    return jsonify({"message": "User validated successfully", "user": email}), 200
+    return jsonify({
+        "message": "User registered successfully",
+        "user": user.to_dict()
+    }), 201
 
 
-@main.route('/addPlant', methods=['POST'])
-def add_plant():
-    # Obtener el objeto JSON de la solicitud
-    data = request.get_json()
+def _login_user(data):
+    email = data.get("email")
+    password = data.get("password")
 
-    # Extraer los datos de la planta del JSON
-    usuario = data['usuario']
-    nombre = data['nombre']
-    frecuenciaRiego = data['frecuenciaRiego']
-    descripcion = data['descripcion']
-    recomendaciones = data['recomendaciones']
-    lastWateredTime = data['lastWateredTime']
+    if not email or not password:
+        return jsonify({
+            "message": "Email and password are required"
+        }), 400
 
-    # Crear una nueva instancia de PlantEntry
-    new_plant = PlantEntry(usuario=usuario, nombre=nombre, 
-                           frecuenciaRiego=frecuenciaRiego, 
-                           descripcion=descripcion, 
-                           recomendaciones=recomendaciones,
-                           lastWateredTime=lastWateredTime)
+    user = User.query.filter_by(email=email).first()
 
-    # Agregar la nueva planta a la base de datos
-    db.session.add(new_plant)
+    if not user:
+        return jsonify({
+            "message": "User does not exist"
+        }), 404
 
-    # Intentar guardar en la base de datos y manejar posibles excepciones
-    try:
+    if not _verify_password(user.password, password):
+        return jsonify({
+            "message": "Incorrect password"
+        }), 401
+
+    # Si el usuario venía del sistema anterior con contraseña en texto plano,
+    # aquí actualizamos su contraseña a formato hash.
+    if user.password == password:
+        user.password = generate_password_hash(password)
         db.session.commit()
-    except Exception as e:
-        # Si hay un error, devolver un mensaje de error
-        db.session.rollback()
-        return jsonify({"message": str(e)}), 500
 
-    # Si todo es exitoso, devolver un mensaje de éxito
-    return jsonify({"message": "Plant added successfully", "plant_id": new_plant.id}), 201
+    return jsonify({
+        "message": "User validated successfully",
+        "user": user.to_dict()
+    }), 200
 
-@main.route('/getUserPlants', methods=['GET'])
-def get_user_plants():
-    usuario = request.args.get('usuario')
 
-    if not usuario:
-        return jsonify({"message": "No user provided"}), 400
+@main.route("/api/auth/register", methods=["POST"])
+def register():
+    data, error_response = _get_json_data()
 
-    try:
-        # Buscar todas las plantas para el usuario dado
-        plantas = PlantEntry.query.filter_by(usuario=usuario).all()
-        plantas_data = [
-            {
-                "id": planta.id,
-                "nombre": planta.nombre,
-                "frecuenciaRiego": planta.frecuenciaRiego,
-                "descripcion": planta.descripcion,
-                "recomendaciones": planta.recomendaciones,
-                "lastWateredTime": planta.lastWateredTime
-            } for planta in plantas
-        ]
+    if error_response:
+        return error_response
 
-        return jsonify(plantas_data), 200
+    return _register_user(data)
 
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
-    
 
-@main.route('/removePlant', methods=['POST'])
-def remove_plant():
-    # Extraer plant_id del cuerpo de la solicitud
-    data = request.get_json()
-    print(data)
-    id = data.get('plantId')
-    print(data)
-    print(id)
-    if not id:
-        return jsonify({"message": "Plant ID is missing"}), 400
+@main.route("/api/auth/login", methods=["POST"])
+def login():
+    data, error_response = _get_json_data()
 
-    # Buscar la entrada de planta por ID
-    planta = PlantEntry.query.filter_by(id=id).first()
-    print(planta)
+    if error_response:
+        return error_response
 
-    if planta is None:
-        return jsonify({"message": "Plant not found"}), 404
+    return _login_user(data)
 
-    try:
-        db.session.delete(planta)
-        db.session.commit()
-        return jsonify({"message": "Plant successfully deleted"}), 200
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": str(e)}), 500
-    
-@main.route('/updateLastWateredTime', methods=['POST'])
-def update_last_watered_time():
-    data = request.get_json()
-    print(data)
-    id = data.get('plantId')
-    new_last_watered_time = data.get('lastWateredTime')
-    print(new_last_watered_time)
-    # Verificar que tanto plant_id como new_last_watered_time se proporcionen
-    if not id or not new_last_watered_time:
-        return jsonify({"message": "Missing data"}), 400
-    print('Pase')
-    # Convertir la fecha en string a un objeto datetime
-    # try:
-    #     new_last_watered_time = datetime.fromisoformat(new_last_watered_time)
-    #     print('Pase3')
-    # except ValueError:
-    #     print('Pase2')
-    #     return jsonify({"message": "Invalid date format"}), 400
-    # print(new_last_watered_time)
 
-    # Buscar la planta y actualizar el tiempo de último riego
-    print(id)
-    planta = PlantEntry.query.filter_by(id=id).first()
-    print(planta)
-    if planta is None:
-        return jsonify({"message": "Plant not found"}), 404
+# Rutas temporales de compatibilidad con el frontend original.
+# Más adelante actualizaremos React para usar /api/auth/register y /api/auth/login.
+@main.route("/add", methods=["POST"])
+def legacy_add_user():
+    data, error_response = _get_json_data()
 
-    try:
-        print('assssssssssssss')
-        planta.lastWateredTime = new_last_watered_time
-        db.session.commit()
-        return jsonify({"message": "Last watered time updated successfully"}), 200
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": str(e)}), 500
+    if error_response:
+        return error_response
+
+    return _register_user(data)
+
+
+@main.route("/userValidation", methods=["POST"])
+def legacy_user_validation():
+    data, error_response = _get_json_data()
+
+    if error_response:
+        return error_response
+
+    return _login_user(data)
