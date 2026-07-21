@@ -1,7 +1,4 @@
-import json
-import shutil
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
@@ -9,7 +6,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from .extensions import db
-from .models import User, Micrograph, Analysis, AnalysisResult
+from .models import User, Micrograph, Analysis
+from .analysis_engine.analysis_service import AnalysisService
 
 
 main = Blueprint("main", __name__)
@@ -307,71 +305,30 @@ def run_analysis():
     else:
         user_id = None
 
-    micrograph = Micrograph.query.get(micrograph_id)
-
-    if not micrograph:
-        return jsonify({
-            "message": "Micrograph not found"
-        }), 404
-
-    analysis = Analysis(
+    analysis, result, error = AnalysisService.run_simulated_analysis(
+        micrograph_id=micrograph_id,
         user_id=user_id,
-        micrograph_id=micrograph.id,
         model_name=model_name,
-        status="processing",
-        parameters_json=json.dumps(parameters)
+        parameters=parameters
     )
 
-    db.session.add(analysis)
-    db.session.commit()
-
-    try:
-        original_path = Path(micrograph.file_path)
-        segmented_folder = Path(current_app.config["UPLOAD_SEGMENTED_FOLDER"])
-
-        simulated_segmented_filename = (
-            f"{original_path.stem}_simulated_segmented{original_path.suffix}"
-        )
-        simulated_segmented_path = segmented_folder / simulated_segmented_filename
-
-        # Simulación temporal:
-        # copiamos la imagen original como si fuera una imagen segmentada.
-        # Más adelante esta parte será reemplazada por SAM 2.
-        shutil.copyfile(original_path, simulated_segmented_path)
-
-        result = AnalysisResult(
-            analysis_id=analysis.id,
-            particle_count=0,
-            total_masks=0,
-            valid_masks=0,
-            rejected_masks=0,
-            segmented_image_path=str(simulated_segmented_path)
-        )
-
-        analysis.status = "completed"
-        analysis.completed_at = datetime.utcnow()
-
-        db.session.add(result)
-        db.session.commit()
-
+    if analysis is None:
         return jsonify({
-            "message": "Analysis completed successfully",
-            "analysis": analysis.to_dict(),
-            "result": result.to_dict()
-        }), 200
+            "message": error
+        }), 404
 
-    except Exception as error:
-        analysis.status = "failed"
-        analysis.error_message = str(error)
-        analysis.completed_at = datetime.utcnow()
-        db.session.commit()
-
+    if error:
         return jsonify({
             "message": "Analysis failed",
-            "error": str(error),
+            "error": error,
             "analysis": analysis.to_dict()
         }), 500
 
+    return jsonify({
+        "message": "Analysis completed successfully",
+        "analysis": analysis.to_dict(),
+        "result": result.to_dict()
+    }), 200
 
 @main.route("/api/analysis/<int:analysis_id>", methods=["GET"])
 def get_analysis(analysis_id):
