@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -384,6 +384,27 @@ def analysis_history():
             for analysis in analyses
         ]
     }), 200
+
+@main.route("/api/files/original/<path:filename>", methods=["GET"])
+def get_original_file(filename):
+    """
+    Devuelve una micrografía original almacenada en uploads/original.
+    """
+    return send_from_directory(
+        current_app.config["UPLOAD_ORIGINAL_FOLDER"],
+        filename
+    )
+
+
+@main.route("/api/files/segmented/<path:filename>", methods=["GET"])
+def get_segmented_file(filename):
+    """
+    Devuelve una imagen segmentada almacenada en uploads/segmented.
+    """
+    return send_from_directory(
+        current_app.config["UPLOAD_SEGMENTED_FOLDER"],
+        filename
+    )
 
 # Rutas temporales de compatibilidad con el frontend original.
 # Más adelante actualizaremos React para usar /api/auth/register y /api/auth/login.
