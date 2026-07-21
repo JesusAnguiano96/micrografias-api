@@ -2,11 +2,44 @@ import json
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from .chart_generator import save_summary_figure
 from .mask_filters import filter_masks
 from .measurement import build_bins, measure_masks
 from .visualization import draw_measurements
+
+def read_image_bgr(image_path):
+    """
+    Lee una imagen usando np.fromfile + cv2.imdecode.
+
+    Esta forma es más robusta en Windows cuando la ruta contiene acentos
+    o caracteres especiales.
+    """
+    image_path = Path(image_path)
+
+    image_bytes = np.fromfile(str(image_path), dtype=np.uint8)
+    image_bgr = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+
+    return image_bgr
+
+
+def write_image(image_path, image_bgr):
+    """
+    Guarda una imagen usando cv2.imencode + tofile.
+
+    Esta forma evita problemas de escritura con rutas que contienen acentos
+    o caracteres especiales en Windows.
+    """
+    image_path = Path(image_path)
+    extension = image_path.suffix
+
+    success, encoded_image = cv2.imencode(extension, image_bgr)
+
+    if not success:
+        raise ValueError(f"No se pudo codificar la imagen: {image_path}")
+
+    encoded_image.tofile(str(image_path))
 
 
 class LegacySamAnalyzer:
@@ -115,7 +148,7 @@ class LegacySamAnalyzer:
                 f"No se encontró el checkpoint: {checkpoint_path}"
             )
 
-        image_bgr = cv2.imread(str(image_path))
+        image_bgr = read_image_bgr(image_path)
 
         if image_bgr is None:
             raise ValueError(f"No se pudo abrir la imagen: {image_path}")
@@ -190,7 +223,7 @@ class LegacySamAnalyzer:
         metrics_path = output_dir / f"{stem}_sam_legacy_metrics.json"
 
         annotated_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(str(annotated_path), annotated_bgr)
+        write_image(annotated_path, annotated_bgr)
 
         save_summary_figure(
             annotated_image=annotated_image,

@@ -306,7 +306,7 @@ def run_analysis():
     else:
         user_id = None
 
-    analysis, result, error = AnalysisService.run_simulated_analysis(
+    analysis, result, error = AnalysisService.run_analysis(
         micrograph_id=micrograph_id,
         user_id=user_id,
         model_name=model_name,
