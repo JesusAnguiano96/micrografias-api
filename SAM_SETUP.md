@@ -1,11 +1,11 @@
-# Configuración de SAM clásico para el backend
+﻿# ConfiguraciÃ³n de SAM clÃ¡sico para el backend
 
-Este documento describe cómo preparar el ambiente local para ejecutar el modelo
-SAM clásico dentro del backend Flask del sistema de análisis de micrografías.
+Este documento describe cÃ³mo preparar el ambiente local para ejecutar el modelo
+SAM clÃ¡sico dentro del backend Flask del sistema de anÃ¡lisis de micrografÃ­as.
 
 El flujo documentado corresponde al modelo usado en el prototipo base:
 
-- Modelo: Segment Anything Model clásico
+- Modelo: Segment Anything Model clÃ¡sico
 - Variante: ViT-H
 - Checkpoint: `sam_vit_h_4b8939.pth`
 - Backend: Flask
@@ -40,7 +40,7 @@ Ejecutar:
 nvidia-smi
 ```
 
-Si el comando muestra información de la GPU, entonces el equipo tiene una GPU NVIDIA disponible.
+Si el comando muestra informaciÃ³n de la GPU, entonces el equipo tiene una GPU NVIDIA disponible.
 
 En el equipo de prueba se obtuvo una GPU NVIDIA GeForce RTX 4060.
 
@@ -48,13 +48,13 @@ En el equipo de prueba se obtuvo una GPU NVIDIA GeForce RTX 4060.
 
 ## 3. Instalar PyTorch con CUDA
 
-Para Windows + pip + CUDA 12.4 se usó:
+Para Windows + pip + CUDA 12.4 se usÃ³:
 
 ```powershell
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
 
-Verificar instalación:
+Verificar instalaciÃ³n:
 
 ```powershell
 python -c "import torch; import torchvision; print('torch:', torch.__version__); print('torchvision:', torchvision.__version__); print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
@@ -69,7 +69,7 @@ GPU: NVIDIA GeForce RTX 4060 ...
 
 ---
 
-## 4. Instalar dependencias de procesamiento de imágenes
+## 4. Instalar dependencias de procesamiento de imÃ¡genes
 
 ```powershell
 python -m pip install opencv-python matplotlib numpy pillow
@@ -147,7 +147,7 @@ git check-ignore -v .\checkpoints\sam_vit_h_4b8939.pth
 
 ---
 
-## 8. Probar SAM clásico desde script modular
+## 8. Probar SAM clÃ¡sico desde script modular
 
 El script de prueba modular es:
 
@@ -155,7 +155,7 @@ El script de prueba modular es:
 tools/test_legacy_sam_module.py
 ```
 
-Ejemplo de ejecución:
+Ejemplo de ejecuciÃ³n:
 
 ```powershell
 python tools\test_legacy_sam_module.py `
@@ -182,13 +182,13 @@ La imagen anotada contiene:
 
 - bounding boxes
 - diagonales verdes
-- partículas detectadas
+- partÃ­culas detectadas
 
 La figura resumen contiene:
 
-- micrografía anotada
-- gráfica de áreas
-- gráfica de longitudes
+- micrografÃ­a anotada
+- grÃ¡fica de Ã¡reas
+- grÃ¡fica de longitudes
 
 El archivo JSON contiene:
 
@@ -198,7 +198,7 @@ El archivo JSON contiene:
 - `rejected_masks`
 - `areas_nm2`
 - `diagonals_nm`
-- distribuciones de área y longitud
+- distribuciones de Ã¡rea y longitud
 
 ---
 
@@ -281,13 +281,13 @@ particle_count = 0
 Esto confirma que el sistema tiene dos rutas:
 
 ```text
-SAM  -> análisis real con SAM clásico ViT-H
-SAM2 -> análisis simulado temporal
+SAM  -> anÃ¡lisis real con SAM clÃ¡sico ViT-H
+SAM2 -> anÃ¡lisis simulado temporal
 ```
 
 ---
 
-## 11. Archivos importantes del módulo SAM clásico
+## 11. Archivos importantes del mÃ³dulo SAM clÃ¡sico
 
 ```text
 myapp/analysis_engine/legacy_sam_analyzer.py
@@ -300,9 +300,9 @@ myapp/analysis_engine/chart_generator.py
 Responsabilidades:
 
 ```text
-legacy_sam_analyzer.py -> coordina el análisis SAM clásico
+legacy_sam_analyzer.py -> coordina el anÃ¡lisis SAM clÃ¡sico
 mask_filters.py        -> filtra barra inferior, letras, ruido y contenedores
-measurement.py         -> calcula áreas y diagonales
+measurement.py         -> calcula Ã¡reas y diagonales
 visualization.py       -> dibuja bounding boxes y diagonales
 chart_generator.py     -> genera figura resumen
 ```
@@ -313,9 +313,9 @@ chart_generator.py     -> genera figura resumen
 
 ### Error: `ModuleNotFoundError: No module named 'torch'`
 
-Significa que PyTorch no está instalado.
+Significa que PyTorch no estÃ¡ instalado.
 
-Solución:
+SoluciÃ³n:
 
 ```powershell
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
@@ -325,9 +325,9 @@ python -m pip install torch torchvision --index-url https://download.pytorch.org
 
 ### Error: `ModuleNotFoundError: No module named 'segment_anything'`
 
-Significa que SAM no está instalado.
+Significa que SAM no estÃ¡ instalado.
 
-Solución:
+SoluciÃ³n:
 
 ```powershell
 python -m pip install git+https://github.com/facebookresearch/segment-anything.git
@@ -335,7 +335,7 @@ python -m pip install git+https://github.com/facebookresearch/segment-anything.g
 
 ---
 
-### Error: `No se encontró el checkpoint`
+### Error: `No se encontrÃ³ el checkpoint`
 
 Verificar que exista:
 
@@ -355,7 +355,7 @@ sam_vit_h_4b8939.pth
 
 En Windows, OpenCV puede fallar con rutas que contienen acentos o caracteres especiales.
 
-El módulo `legacy_sam_analyzer.py` usa lectura robusta con:
+El mÃ³dulo `legacy_sam_analyzer.py` usa lectura robusta con:
 
 ```python
 np.fromfile + cv2.imdecode
@@ -370,16 +370,16 @@ cv2.imencode + tofile
 Esto evita problemas con rutas como:
 
 ```text
-Código de Diego
+CÃ³digo de Diego
 ```
 
 ---
 
 ### Error: `No es posible conectar con el servidor remoto`
 
-Significa que Flask no está corriendo.
+Significa que Flask no estÃ¡ corriendo.
 
-Solución:
+SoluciÃ³n:
 
 ```powershell
 python run.py
@@ -393,39 +393,39 @@ Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/health" -Method GET
 
 ---
 
-## 13. Notas de diseño
+## 13. Notas de diseÃ±o
 
-El modelo SAM clásico se integró como base funcional heredada del prototipo anterior.
+El modelo SAM clÃ¡sico se integrÃ³ como base funcional heredada del prototipo anterior.
 
 El flujo actual es:
 
 ```text
 React
-↓
+â†“
 POST /api/analysis/run
-↓
+â†“
 AnalysisService
-↓
+â†“
 LegacySamAnalyzer
-↓
-SAM clásico ViT-H
-↓
-máscaras
-↓
+â†“
+SAM clÃ¡sico ViT-H
+â†“
+mÃ¡scaras
+â†“
 filtros
-↓
+â†“
 bounding boxes
-↓
+â†“
 diagonales
-↓
-gráficas
-↓
-métricas
-↓
+â†“
+grÃ¡ficas
+â†“
+mÃ©tricas
+â†“
 reporte
 ```
 
-Este flujo permite mantener la compatibilidad con el prototipo anterior y preparar la integración posterior de SAM 2.
+Este flujo permite mantener la compatibilidad con el prototipo anterior y preparar la integraciÃ³n posterior de SAM 2.
 
 ---
 
@@ -438,20 +438,20 @@ SAM classic:
 - ejecuta SAM real ViT-H
 - genera imagen anotada
 - genera figura resumen
-- genera métricas JSON
+- genera mÃ©tricas JSON
 - actualiza AnalysisResult
 - permite reporte enriquecido
 
 SAM2:
 - flujo simulado temporal
-- pendiente de reemplazar por integración SAM 2 real
+- pendiente de reemplazar por integraciÃ³n SAM 2 real
 ```
 
 ---
 
 ## 15. Commit recomendado
 
-Después de crear este archivo:
+DespuÃ©s de crear este archivo:
 
 ```powershell
 git status
@@ -459,3 +459,32 @@ git add SAM_SETUP.md
 git commit -m "Document legacy SAM setup"
 git push
 ```
+
+---
+
+## 16. Instalación mediante archivos de dependencias
+
+Además de los comandos manuales, el repositorio incluye archivos separados para instalar las dependencias de SAM clásico.
+
+Instalar PyTorch con CUDA 12.4:
+
+```powershell
+python -m pip install -r requirements-torch-cu124.txt
+```
+
+Instalar dependencias de procesamiento de imágenes y Segment Anything:
+
+```powershell
+python -m pip install -r requirements-sam.txt
+```
+
+Orden recomendado:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-torch-cu124.txt
+python -m pip install -r requirements-sam.txt
+```
+
+Se separa PyTorch del `requirements.txt` principal porque las versiones con CUDA dependen del equipo, sistema operativo y versión compatible de CUDA.
+
