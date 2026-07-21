@@ -28,3 +28,13 @@ reports/*
 !uploads/original/.gitkeep
 !uploads/segmented/.gitkeep
 !reports/.gitkeep
+
+
+# Model checkpoints
+checkpoints/*
+!checkpoints/.gitkeep
+
+# SAM test outputs
+outputs/*
+!outputs/sam_legacy/
+!outputs/sam_legacy/.gitkeep
