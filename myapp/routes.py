@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 from .extensions import db
 from .models import User, Micrograph, Analysis
 from .analysis_engine.analysis_service import AnalysisService
+from .reporting.report_service import ReportService
 
 
 main = Blueprint("main", __name__)
@@ -404,6 +405,65 @@ def get_segmented_file(filename):
     return send_from_directory(
         current_app.config["UPLOAD_SEGMENTED_FOLDER"],
         filename
+    )
+
+@main.route("/api/reports/generate", methods=["POST"])
+def generate_report():
+    """
+    Genera un reporte para un análisis existente.
+    """
+    data, error_response = _get_json_data()
+
+    if error_response:
+        return error_response
+
+    analysis_id = data.get("analysis_id")
+
+    if not analysis_id:
+        return jsonify({
+            "message": "analysis_id is required"
+        }), 400
+
+    try:
+        analysis_id = int(analysis_id)
+    except ValueError:
+        return jsonify({
+            "message": "analysis_id must be an integer"
+        }), 400
+
+    report, error = ReportService.generate_text_report(analysis_id)
+
+    if error:
+        return jsonify({
+            "message": error
+        }), 404
+
+    return jsonify({
+        "message": "Report generated successfully",
+        "report": report.to_dict()
+    }), 201
+
+
+@main.route("/api/reports/<int:report_id>/download", methods=["GET"])
+def download_report(report_id):
+    """
+    Descarga un reporte generado.
+    """
+    from .models import Report
+
+    report = Report.query.get(report_id)
+
+    if report is None:
+        return jsonify({
+            "message": "Report not found"
+        }), 404
+
+    report_path = Path(report.file_path)
+
+    return send_from_directory(
+        report_path.parent,
+        report_path.name,
+        as_attachment=True
     )
 
 # Rutas temporales de compatibilidad con el frontend original.
