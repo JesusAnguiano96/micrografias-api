@@ -38,3 +38,6 @@ checkpoints/*
 outputs/*
 !outputs/sam_legacy/
 !outputs/sam_legacy/.gitkeep
+# SAM legacy generated outputs
+outputs/sam_legacy/*
+!outputs/sam_legacy/.gitkeep
