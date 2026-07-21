@@ -1,45 +1,69 @@
 import os
-import requests
-import shutil
-from flask import Flask 
-from .extensions import db
-from .routes import main
-from .models import User
+from pathlib import Path
+
+from flask import Flask
 from flask_cors import CORS
 
-# def remove_files_in_directory(directory):
-#     for filename in os.listdir(directory):
-#         file_path = os.path.join(directory, filename)
-#         try:
-#             if os.path.isfile(file_path) or os.path.islink(file_path):
-#                 os.unlink(file_path)
-#             elif os.path.isdir(file_path):
-#                 # If you want to remove subdirectories as well, uncomment the following line
-#                 shutil.rmtree(file_path)
-#         except Exception as e:
-#             print(f'Failed to delete {file_path}. Reason: {e}')
+from .extensions import db
+from .routes import main
+
 
 def create_app():
-    
     app = Flask(__name__)
 
-    # CORS setup
-    CORS(app, resources={r"/*": {"origins": "https://frontmastest.onrender.com"}})
+    # Ruta base del proyecto apiMAS
+    base_dir = Path(__file__).resolve().parent.parent
 
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+    # Carpetas locales para guardar archivos del sistema
+    upload_original_dir = base_dir / "uploads" / "original"
+    upload_segmented_dir = base_dir / "uploads" / "segmented"
+    reports_dir = base_dir / "reports"
 
+    upload_original_dir.mkdir(parents=True, exist_ok=True)
+    upload_segmented_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    # Configuración básica de Flask
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
+
+    # Base de datos:
+    # Si existe DATABASE_URL, se usa esa.
+    # Si no existe, se crea una base SQLite local llamada mas_local.db.
+    db_path = base_dir / "mas_local.db"
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+        "DATABASE_URL",
+        f"sqlite:///{db_path.as_posix()}"
+    )
+
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    # Rutas de carpetas disponibles para otros módulos
+    app.config["UPLOAD_ORIGINAL_FOLDER"] = str(upload_original_dir)
+    app.config["UPLOAD_SEGMENTED_FOLDER"] = str(upload_segmented_dir)
+    app.config["REPORTS_FOLDER"] = str(reports_dir)
+
+    # CORS permite que React pueda comunicarse con Flask.
+    # localhost:3000 será usado por el frontend en desarrollo.
+    allowed_origins = os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:3000,https://frontmastest.onrender.com"
+    ).split(",")
+
+    CORS(app, resources={r"/*": {"origins": allowed_origins}})
+
+    # Inicializar base de datos
     db.init_app(app)
+
+    # Registrar rutas
     app.register_blueprint(main)
 
-    # Check if the database needs to be initialized
+    # Importar modelos para que SQLAlchemy los conozca antes de crear tablas
+    from . import models  # noqa: F401
+
+    # Crear tablas si no existen.
+    # Importante: esto NO borra la base de datos.
     with app.app_context():
-        db.drop_all()
         db.create_all()
-        app.logger.info('Initialized the database!')
-        
-        # Consider removing hardcoded user or ensuring it's only for testing
-        new_user = User(email='diego@gmail.com', password='12345', occupation='student')
-        db.session.add(new_user)
-        db.session.commit()
+        app.logger.info("Base de datos inicializada sin borrar información.")
 
     return app

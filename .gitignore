@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes virtuales
+.venv/
+venv/
+env/
+
+# Base de datos local
+*.db
+*.sqlite
+*.sqlite3
+
+# Variables de entorno
+.env
+
+# Flask
+instance/
+
+# Archivos generados localmente
+uploads/original/*
+uploads/segmented/*
+reports/*
+
+# Mantener estructura de carpetas
+!uploads/original/.gitkeep
+!uploads/segmented/.gitkeep
+!reports/.gitkeep
