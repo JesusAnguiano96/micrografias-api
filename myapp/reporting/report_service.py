@@ -30,13 +30,16 @@ class ReportService:
     @staticmethod
     def _load_sam_metrics(segmented_image_path):
         """
-        Intenta cargar el archivo JSON de métricas generado por SAM clásico.
+        Intenta cargar el archivo JSON de métricas generado por SAM clásico
+        o por SAM 2.
 
-        A partir de:
+        SAM clásico:
         imagen_sam_legacy_annotated.png
-
-        Busca:
         imagen_sam_legacy_metrics.json
+
+        SAM 2:
+        imagen_sam2_60_annotated.png
+        imagen_sam2_60_metrics.json
         """
         if not segmented_image_path:
             return None
@@ -46,14 +49,25 @@ class ReportService:
         if not segmented_path.exists():
             return None
 
-        metrics_path = Path(
-            str(segmented_path).replace(
-                "_sam_legacy_annotated.png",
-                "_sam_legacy_metrics.json"
-            )
-        )
+        metrics_path = None
 
-        if not metrics_path.exists():
+        if segmented_path.name.endswith("_sam_legacy_annotated.png"):
+            metrics_path = Path(
+                str(segmented_path).replace(
+                    "_sam_legacy_annotated.png",
+                    "_sam_legacy_metrics.json"
+                )
+            )
+
+        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith("_annotated.png"):
+            metrics_path = Path(
+                str(segmented_path).replace(
+                    "_annotated.png",
+                    "_metrics.json"
+                )
+            )
+
+        if metrics_path is None or not metrics_path.exists():
             return None
 
         try:
@@ -64,19 +78,33 @@ class ReportService:
     @staticmethod
     def _get_summary_figure_path(segmented_image_path):
         """
-        Intenta obtener la ruta de la figura resumen generada por SAM clásico.
+        Intenta obtener la ruta de la figura resumen generada por SAM clásico
+        o por SAM 2.
         """
         if not segmented_image_path:
             return None
 
-        summary_path = Path(
-            str(segmented_image_path).replace(
-                "_sam_legacy_annotated.png",
-                "_sam_legacy_summary.png"
-            )
-        )
+        segmented_path = Path(segmented_image_path)
 
-        if summary_path.exists():
+        summary_path = None
+
+        if segmented_path.name.endswith("_sam_legacy_annotated.png"):
+            summary_path = Path(
+                str(segmented_path).replace(
+                    "_sam_legacy_annotated.png",
+                    "_sam_legacy_summary.png"
+                )
+            )
+
+        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith("_annotated.png"):
+            summary_path = Path(
+                str(segmented_path).replace(
+                    "_annotated.png",
+                    "_summary.png"
+                )
+            )
+
+        if summary_path and summary_path.exists():
             return str(summary_path)
 
         return None
