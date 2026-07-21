@@ -1,4 +1,7 @@
+import json
+import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
@@ -6,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from .extensions import db
-from .models import User, Micrograph
+from .models import User, Micrograph, Analysis, AnalysisResult
 
 
 main = Blueprint("main", __name__)
@@ -262,6 +265,168 @@ def list_micrographs():
         "micrographs": [micrograph.to_dict() for micrograph in micrographs]
     }), 200
 
+
+@main.route("/api/analysis/run", methods=["POST"])
+def run_analysis():
+    """
+    Ejecuta un análisis sobre una micrografía previamente cargada.
+
+    En esta etapa el análisis es simulado. Es decir, todavía no ejecuta SAM 2.
+    Su objetivo es validar el flujo:
+    micrografía -> análisis -> resultado -> respuesta JSON.
+    """
+    data, error_response = _get_json_data()
+
+    if error_response:
+        return error_response
+
+    micrograph_id = data.get("micrograph_id")
+    user_id = data.get("user_id")
+    model_name = data.get("model_name", "SAM2")
+    parameters = data.get("parameters", {})
+
+    if not micrograph_id:
+        return jsonify({
+            "message": "micrograph_id is required"
+        }), 400
+
+    try:
+        micrograph_id = int(micrograph_id)
+    except ValueError:
+        return jsonify({
+            "message": "micrograph_id must be an integer"
+        }), 400
+
+    if user_id:
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({
+                "message": "user_id must be an integer"
+            }), 400
+    else:
+        user_id = None
+
+    micrograph = Micrograph.query.get(micrograph_id)
+
+    if not micrograph:
+        return jsonify({
+            "message": "Micrograph not found"
+        }), 404
+
+    analysis = Analysis(
+        user_id=user_id,
+        micrograph_id=micrograph.id,
+        model_name=model_name,
+        status="processing",
+        parameters_json=json.dumps(parameters)
+    )
+
+    db.session.add(analysis)
+    db.session.commit()
+
+    try:
+        original_path = Path(micrograph.file_path)
+        segmented_folder = Path(current_app.config["UPLOAD_SEGMENTED_FOLDER"])
+
+        simulated_segmented_filename = (
+            f"{original_path.stem}_simulated_segmented{original_path.suffix}"
+        )
+        simulated_segmented_path = segmented_folder / simulated_segmented_filename
+
+        # Simulación temporal:
+        # copiamos la imagen original como si fuera una imagen segmentada.
+        # Más adelante esta parte será reemplazada por SAM 2.
+        shutil.copyfile(original_path, simulated_segmented_path)
+
+        result = AnalysisResult(
+            analysis_id=analysis.id,
+            particle_count=0,
+            total_masks=0,
+            valid_masks=0,
+            rejected_masks=0,
+            segmented_image_path=str(simulated_segmented_path)
+        )
+
+        analysis.status = "completed"
+        analysis.completed_at = datetime.utcnow()
+
+        db.session.add(result)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Analysis completed successfully",
+            "analysis": analysis.to_dict(),
+            "result": result.to_dict()
+        }), 200
+
+    except Exception as error:
+        analysis.status = "failed"
+        analysis.error_message = str(error)
+        analysis.completed_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify({
+            "message": "Analysis failed",
+            "error": str(error),
+            "analysis": analysis.to_dict()
+        }), 500
+
+
+@main.route("/api/analysis/<int:analysis_id>", methods=["GET"])
+def get_analysis(analysis_id):
+    """
+    Devuelve la información de un análisis específico.
+    """
+    analysis = Analysis.query.get(analysis_id)
+
+    if not analysis:
+        return jsonify({
+            "message": "Analysis not found"
+        }), 404
+
+    response = {
+        "analysis": analysis.to_dict(),
+        "micrograph": analysis.micrograph.to_dict() if analysis.micrograph else None,
+        "result": analysis.result.to_dict() if analysis.result else None,
+        "report": analysis.report.to_dict() if analysis.report else None
+    }
+
+    return jsonify(response), 200
+
+
+@main.route("/api/analysis/history", methods=["GET"])
+def analysis_history():
+    """
+    Devuelve el historial de análisis registrados.
+    Si se envía user_id como parámetro, filtra por usuario.
+    """
+    user_id = request.args.get("user_id")
+
+    query = Analysis.query
+
+    if user_id:
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({
+                "message": "user_id must be an integer"
+            }), 400
+
+        query = query.filter_by(user_id=user_id)
+
+    analyses = query.order_by(Analysis.started_at.desc()).all()
+
+    return jsonify({
+        "analyses": [
+            {
+                "analysis": analysis.to_dict(),
+                "micrograph": analysis.micrograph.to_dict() if analysis.micrograph else None,
+                "result": analysis.result.to_dict() if analysis.result else None
+            }
+            for analysis in analyses
+        ]
+    }), 200
 
 # Rutas temporales de compatibilidad con el frontend original.
 # Más adelante actualizaremos React para usar /api/auth/register y /api/auth/login.
