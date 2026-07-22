@@ -11,6 +11,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     Image,
+    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -59,7 +60,9 @@ class ReportService:
                 )
             )
 
-        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith("_annotated.png"):
+        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith(
+            "_annotated.png"
+        ):
             metrics_path = Path(
                 str(segmented_path).replace(
                     "_annotated.png",
@@ -96,7 +99,9 @@ class ReportService:
                 )
             )
 
-        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith("_annotated.png"):
+        elif "_sam2_" in segmented_path.name and segmented_path.name.endswith(
+            "_annotated.png"
+        ):
             summary_path = Path(
                 str(segmented_path).replace(
                     "_annotated.png",
@@ -129,8 +134,14 @@ class ReportService:
         for label, value in rows:
             table_data.append(
                 [
-                    Paragraph(f"<b>{ReportService._safe_text(label)}</b>", styles["Body"]),
-                    Paragraph(ReportService._safe_text(value), styles["Body"]),
+                    Paragraph(
+                        f"<b>{ReportService._safe_text(label)}</b>",
+                        styles["Body"]
+                    ),
+                    Paragraph(
+                        ReportService._safe_text(value),
+                        styles["Body"]
+                    ),
                 ]
             )
 
@@ -190,20 +201,30 @@ class ReportService:
 
         table_data = [
             [
-                Paragraph("<b>Range</b>", styles["Body"]),
-                Paragraph("<b>Count</b>", styles["Body"]),
+                Paragraph("Range", styles["TableHeader"]),
+                Paragraph("Count", styles["TableHeader"]),
             ]
         ]
 
         for label, count in zip(labels, counts):
             table_data.append(
                 [
-                    Paragraph(ReportService._safe_text(label), styles["Body"]),
-                    Paragraph(ReportService._safe_text(count), styles["Body"]),
+                    Paragraph(
+                        ReportService._safe_text(label),
+                        styles["Body"]
+                    ),
+                    Paragraph(
+                        ReportService._safe_text(count),
+                        styles["Body"]
+                    ),
                 ]
             )
 
-        table = Table(table_data, colWidths=[4.8 * inch, 1.8 * inch])
+        table = Table(
+            table_data,
+            colWidths=[4.8 * inch, 1.8 * inch],
+            repeatRows=1,
+        )
 
         table.setStyle(
             TableStyle(
@@ -225,7 +246,11 @@ class ReportService:
         return elements
 
     @staticmethod
-    def _make_image_element(image_path, max_width=6.6 * inch, max_height=5.8 * inch):
+    def _make_image_element(
+        image_path,
+        max_width=6.6 * inch,
+        max_height=5.2 * inch
+    ):
         """
         Crea un elemento de imagen ajustado al tamaño máximo disponible.
         """
@@ -343,6 +368,17 @@ class ReportService:
 
         styles.add(
             ParagraphStyle(
+                name="TableHeader",
+                parent=styles["BodyText"],
+                fontName="Helvetica-Bold",
+                fontSize=9,
+                leading=12,
+                textColor=colors.white,
+            )
+        )
+
+        styles.add(
+            ParagraphStyle(
                 name="Note",
                 parent=styles["BodyText"],
                 fontName="Helvetica",
@@ -374,9 +410,11 @@ class ReportService:
         elements.append(
             Paragraph("Micrograph Analysis System", styles["MainTitle"])
         )
+
         elements.append(
             Paragraph("Analysis Report", styles["SectionTitle"])
         )
+
         elements.append(
             Paragraph(
                 f"Generated at: {datetime.utcnow().isoformat()} UTC",
@@ -384,24 +422,35 @@ class ReportService:
             )
         )
 
-        if analysis.model_name.upper() == "SAM":
+        model_name = analysis.model_name.upper()
+
+        if model_name == "SAM":
             note = (
                 "This report was generated using the legacy SAM model adapted "
                 "from the previous prototype. The analysis includes automatic "
                 "mask generation, filtering, bounding boxes, longest-diagonal "
                 "measurement and distribution charts."
             )
+        elif model_name == "SAM2":
+            note = (
+                "This report was generated using the SAM 2 segmentation "
+                "pipeline integrated into the current prototype. The analysis "
+                "includes automatic mask generation, filtering, particle "
+                "counting, measurement extraction and distribution charts."
+            )
         else:
             note = (
-                "This report was generated from the current prototype. At this "
-                "stage, the SAM 2 analysis flow is simulated and will later be "
-                "replaced by the SAM 2 segmentation pipeline."
+                "This report was generated from the current micrograph "
+                "analysis prototype."
             )
 
         elements.append(Spacer(1, 12))
         elements.append(Paragraph(note, styles["Note"]))
 
-        elements.append(Paragraph("Analysis information", styles["SectionTitle"]))
+        elements.append(
+            Paragraph("Analysis information", styles["SectionTitle"])
+        )
+
         elements.append(
             ReportService._make_info_table(
                 [
@@ -416,7 +465,10 @@ class ReportService:
             )
         )
 
-        elements.append(Paragraph("Micrograph information", styles["SectionTitle"]))
+        elements.append(
+            Paragraph("Micrograph information", styles["SectionTitle"])
+        )
+
         elements.append(
             ReportService._make_info_table(
                 [
@@ -450,7 +502,10 @@ class ReportService:
             )
         )
 
-        elements.append(Paragraph("Analysis result", styles["SectionTitle"]))
+        elements.append(
+            Paragraph("Analysis result", styles["SectionTitle"])
+        )
+
         elements.append(
             ReportService._make_info_table(
                 [
@@ -490,18 +545,36 @@ class ReportService:
             )
 
         annotated_image = ReportService._make_image_element(
-            result.segmented_image_path
+            result.segmented_image_path,
+            max_height=5.2 * inch,
         )
 
         if annotated_image:
-            elements.append(Paragraph("Annotated image", styles["SectionTitle"]))
-            elements.append(annotated_image)
+            elements.append(
+                KeepTogether(
+                    [
+                        Paragraph("Annotated image", styles["SectionTitle"]),
+                        Spacer(1, 8),
+                        annotated_image,
+                    ]
+                )
+            )
 
-        summary_image = ReportService._make_image_element(summary_figure_path)
+        summary_image = ReportService._make_image_element(
+            summary_figure_path,
+            max_height=5.2 * inch,
+        )
 
         if summary_image:
-            elements.append(Paragraph("Summary figure", styles["SectionTitle"]))
-            elements.append(summary_image)
+            elements.append(
+                KeepTogether(
+                    [
+                        Paragraph("Summary figure", styles["SectionTitle"]),
+                        Spacer(1, 8),
+                        summary_image,
+                    ]
+                )
+            )
 
         document.build(
             elements,
@@ -509,10 +582,16 @@ class ReportService:
             onLaterPages=ReportService._add_footer,
         )
 
-        existing_report = Report.query.filter_by(analysis_id=analysis.id).first()
+        existing_report = Report.query.filter_by(
+            analysis_id=analysis.id
+        ).first()
 
         if existing_report:
-            old_file_path = Path(existing_report.file_path) if existing_report.file_path else None
+            old_file_path = (
+                Path(existing_report.file_path)
+                if existing_report.file_path
+                else None
+            )
 
             existing_report.filename = filename
             existing_report.file_path = str(file_path)
