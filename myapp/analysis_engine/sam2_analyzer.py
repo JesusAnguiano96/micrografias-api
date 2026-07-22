@@ -51,18 +51,28 @@ def clear_torch_memory():
     """
     Libera memoria temporal de Python y CUDA.
 
-    Esto no descarga necesariamente el modelo SAM2 cacheado, pero ayuda a
-    evitar acumulación de memoria después de varias ejecuciones.
+    Después de errores CUDA/OOM, PyTorch puede conservar bloques reservados.
+    Esta función intenta limpiar de forma segura sin detener el proceso.
     """
     gc.collect()
 
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        try:
+            torch.cuda.synchronize()
+        except Exception:
+            pass
+
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         try:
             torch.cuda.ipc_collect()
         except Exception:
             pass
+
+    gc.collect()
 
 
 def is_cuda_out_of_memory(error):
@@ -504,28 +514,58 @@ class SAM2Analyzer:
         return mask_generator_params, filter_params
 
     @staticmethod
-    def _build_memory_attempts(requested_max_image_size, points_per_batch):
+    def _build_memory_attempts(
+        requested_max_image_size,
+        points_per_batch,
+        points_per_side=None,
+        crop_n_layers=None,
+    ):
         """
         Define intentos de ejecución ante errores de memoria.
 
-        El primer intento usa el valor solicitado. Los siguientes reducen
-        resolución y batch para intentar completar el análisis.
+        El primer intento respeta la configuración solicitada. Los siguientes
+        reducen resolución, batch y densidad de puntos para recuperar el
+        análisis cuando ocurre CUDA out of memory.
         """
         requested_max_image_size = int(requested_max_image_size)
         points_per_batch = int(points_per_batch)
+
+        if points_per_side is not None:
+            points_per_side = int(points_per_side)
+
+        if crop_n_layers is not None:
+            crop_n_layers = int(crop_n_layers)
 
         candidates = [
             {
                 "max_image_size": requested_max_image_size,
                 "points_per_batch": points_per_batch,
+                "points_per_side": points_per_side,
+                "crop_n_layers": crop_n_layers,
             },
             {
-                "max_image_size": min(requested_max_image_size, 600),
-                "points_per_batch": min(points_per_batch, 4),
+                "max_image_size": min(requested_max_image_size, 448),
+                "points_per_batch": 1,
+                "points_per_side": min(points_per_side, 48)
+                if points_per_side is not None
+                else 48,
+                "crop_n_layers": 0,
             },
             {
-                "max_image_size": min(requested_max_image_size, 500),
-                "points_per_batch": min(points_per_batch, 2),
+                "max_image_size": min(requested_max_image_size, 384),
+                "points_per_batch": 1,
+                "points_per_side": min(points_per_side, 32)
+                if points_per_side is not None
+                else 32,
+                "crop_n_layers": 0,
+            },
+            {
+                "max_image_size": min(requested_max_image_size, 320),
+                "points_per_batch": 1,
+                "points_per_side": min(points_per_side, 24)
+                if points_per_side is not None
+                else 24,
+                "crop_n_layers": 0,
             },
         ]
 
@@ -536,6 +576,8 @@ class SAM2Analyzer:
             key = (
                 candidate["max_image_size"],
                 candidate["points_per_batch"],
+                candidate["points_per_side"],
+                candidate["crop_n_layers"],
             )
 
             if key not in seen:
@@ -557,13 +599,18 @@ class SAM2Analyzer:
         """
         Ejecuta SAM 2 con recuperación ante CUDA out of memory.
 
-        Si el primer intento falla, reduce max_image_size y points_per_batch.
+        Si un intento falla, reduce resolución, batch, points_per_side y capas
+        de recorte para intentar completar el análisis.
         """
         points_per_batch = int(mask_generator_params.get("points_per_batch", 64))
+        points_per_side = mask_generator_params.get("points_per_side")
+        crop_n_layers = mask_generator_params.get("crop_n_layers")
 
         attempts = SAM2Analyzer._build_memory_attempts(
             requested_max_image_size=requested_max_image_size,
             points_per_batch=points_per_batch,
+            points_per_side=points_per_side,
+            crop_n_layers=crop_n_layers,
         )
 
         errors = []
@@ -572,9 +619,20 @@ class SAM2Analyzer:
             clear_torch_memory()
 
             attempt_mask_generator_params = dict(mask_generator_params)
+
             attempt_mask_generator_params["points_per_batch"] = attempt[
                 "points_per_batch"
             ]
+
+            if attempt.get("points_per_side") is not None:
+                attempt_mask_generator_params["points_per_side"] = attempt[
+                    "points_per_side"
+                ]
+
+            if attempt.get("crop_n_layers") is not None:
+                attempt_mask_generator_params["crop_n_layers"] = attempt[
+                    "crop_n_layers"
+                ]
 
             sam2_image_rgb, scale_ratio = resize_image_for_sam2(
                 image_rgb=image_rgb,
@@ -582,6 +640,15 @@ class SAM2Analyzer:
             )
 
             mask_generator = None
+
+            print(
+                "[SAM2] Attempt "
+                f"{attempt_index}/{len(attempts)} | "
+                f"max_image_size={attempt['max_image_size']} | "
+                f"points_per_batch={attempt_mask_generator_params.get('points_per_batch')} | "
+                f"points_per_side={attempt_mask_generator_params.get('points_per_side')} | "
+                f"crop_n_layers={attempt_mask_generator_params.get('crop_n_layers')}"
+            )
 
             try:
                 mask_generator = SAM2Analyzer._build_mask_generator(
@@ -616,7 +683,9 @@ class SAM2Analyzer:
                     "sam2_image_rgb": sam2_image_rgb,
                     "scale_ratio": scale_ratio,
                     "effective_max_image_size": attempt["max_image_size"],
-                    "effective_points_per_batch": attempt["points_per_batch"],
+                    "effective_points_per_batch": attempt[
+                        "points_per_batch"
+                    ],
                     "effective_mask_generator_params": attempt_mask_generator_params,
                     "memory_fallback_used": attempt_index > 1,
                     "memory_attempt_index": attempt_index,
@@ -625,27 +694,52 @@ class SAM2Analyzer:
                 }
 
             except RuntimeError as error:
-                clear_torch_memory()
+                error_text = str(error)
 
                 if not is_cuda_out_of_memory(error):
+                    clear_torch_memory()
                     raise
+
+                print(
+                    "[SAM2] CUDA out of memory en intento "
+                    f"{attempt_index}. Probando fallback..."
+                )
 
                 errors.append(
                     {
                         "attempt_index": attempt_index,
                         "max_image_size": attempt["max_image_size"],
-                        "points_per_batch": attempt["points_per_batch"],
-                        "error": str(error),
+                        "points_per_batch": attempt_mask_generator_params.get(
+                            "points_per_batch"
+                        ),
+                        "points_per_side": attempt_mask_generator_params.get(
+                            "points_per_side"
+                        ),
+                        "crop_n_layers": attempt_mask_generator_params.get(
+                            "crop_n_layers"
+                        ),
+                        "error": error_text,
                     }
                 )
 
-            finally:
-                del mask_generator
                 clear_torch_memory()
+
+            finally:
+                try:
+                    del mask_generator
+                except Exception:
+                    pass
+
+                clear_torch_memory()
+
+        SAM2Analyzer._model_cache.clear()
+        clear_torch_memory()
 
         raise RuntimeError(
             "SAM 2 se quedó sin memoria GPU incluso usando fallback. "
-            "Prueba cerrar Flask, reiniciar la terminal o usar una imagen menor."
+            "Se intentaron configuraciones reducidas de max_image_size, "
+            "points_per_batch, points_per_side y crop_n_layers. "
+            "Cierra Flask, verifica nvidia-smi y vuelve a intentar."
         )
 
     @staticmethod

@@ -34,17 +34,20 @@ class AnalysisService:
         "safe_local": {
             "label": "Safe local",
             "max_image_size": 500,
-            "points_per_batch": 2,
+            "points_per_batch": 1,
+            "points_per_side": 48,
         },
         "balanced": {
             "label": "Balanced",
-            "max_image_size": 700,
-            "points_per_batch": 4,
+            "max_image_size": 600,
+            "points_per_batch": 1,
+            "points_per_side": 48,
         },
         "quality": {
             "label": "Quality",
-            "max_image_size": 850,
-            "points_per_batch": 4,
+            "max_image_size": 700,
+            "points_per_batch": 2,
+            "points_per_side": 48,
         },
     }
 
@@ -270,11 +273,19 @@ class AnalysisService:
             )
         )
 
+        points_per_side = int(
+            parameters.get(
+                "points_per_side",
+                mode_settings["points_per_side"]
+            )
+        )
+
         return {
             "execution_mode": execution_mode,
             "execution_mode_label": mode_settings["label"],
             "max_image_size": max_image_size,
             "points_per_batch": points_per_batch,
+            "points_per_side": points_per_side,
         }
 
     @staticmethod
@@ -286,8 +297,9 @@ class AnalysisService:
         execution_mode = safe_local
 
         el backend agregue:
-        max_image_size = 500
-        points_per_batch = 2
+        max_image_size
+        points_per_batch
+        points_per_side
         """
         parameters = dict(parameters or {})
 
@@ -315,6 +327,9 @@ class AnalysisService:
         ]
         effective_parameters["points_per_batch"] = execution_settings[
             "points_per_batch"
+        ]
+        effective_parameters["points_per_side"] = execution_settings[
+            "points_per_side"
         ]
 
         return effective_parameters
@@ -364,7 +379,7 @@ class AnalysisService:
 
             segmented_folder = Path(current_app.config["UPLOAD_SEGMENTED_FOLDER"])
             segmented_folder.mkdir(parents=True, exist_ok=True)
-
+            
             sam2_runtime_parameters = {
                 "sam2_profile": selected_sam2_profile,
                 "overlap_level": selected_overlap_level,
@@ -376,6 +391,7 @@ class AnalysisService:
                 ],
                 "max_image_size": effective_parameters["max_image_size"],
                 "points_per_batch": effective_parameters["points_per_batch"],
+                "points_per_side": effective_parameters["points_per_side"],
             }
 
             optional_sam2_parameters = [
