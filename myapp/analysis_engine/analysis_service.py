@@ -22,22 +22,28 @@ class AnalysisService:
     En SAM2 se separan dos conceptos:
     - Perfil científico: hiperparámetros PSO por nivel de solapamiento.
     - Modo de ejecución: ajustes técnicos de memoria/calidad.
+
+    Nota:
+    max_image_size puede afectar el nivel de detalle de segmentación porque
+    reduce temporalmente la imagen antes de inferir con SAM 2.
+    points_per_batch controla consumo de memoria y velocidad, pero no debería
+    modificar de forma importante las máscaras obtenidas.
     """
 
     SAM2_EXECUTION_MODES = {
         "safe_local": {
             "label": "Safe local",
-            "max_image_size": 700,
-            "points_per_batch": 8,
+            "max_image_size": 500,
+            "points_per_batch": 2,
         },
         "balanced": {
             "label": "Balanced",
-            "max_image_size": 850,
-            "points_per_batch": 8,
+            "max_image_size": 700,
+            "points_per_batch": 4,
         },
         "quality": {
             "label": "Quality",
-            "max_image_size": 1000,
+            "max_image_size": 850,
             "points_per_batch": 4,
         },
     }
@@ -280,8 +286,8 @@ class AnalysisService:
         execution_mode = safe_local
 
         el backend agregue:
-        max_image_size = 700
-        points_per_batch = 8
+        max_image_size = 500
+        points_per_batch = 2
         """
         parameters = dict(parameters or {})
 

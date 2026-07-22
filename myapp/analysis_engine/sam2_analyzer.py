@@ -1,4 +1,5 @@
 import contextlib
+import gc
 import json
 import warnings
 from pathlib import Path
@@ -44,6 +45,34 @@ def write_image(image_path, image_bgr):
         raise ValueError(f"No se pudo codificar la imagen: {image_path}")
 
     encoded_image.tofile(str(image_path))
+
+
+def clear_torch_memory():
+    """
+    Libera memoria temporal de Python y CUDA.
+
+    Esto no descarga necesariamente el modelo SAM2 cacheado, pero ayuda a
+    evitar acumulación de memoria después de varias ejecuciones.
+    """
+    gc.collect()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+
+def is_cuda_out_of_memory(error):
+    error_message = str(error).lower()
+
+    return (
+        "out of memory" in error_message
+        or "cuda error: out of memory" in error_message
+        or "cuda out of memory" in error_message
+    )
 
 
 def get_device():
@@ -404,12 +433,11 @@ class SAM2Analyzer:
     - SAM 2 real.
     - perfiles de hiperparámetros obtenidos por PSO.
     - filtros heredados del prototipo de Diego.
-    - filtro morfológico del prototipo SAM 2.
+    - filtro morfológico.
     - medición, visualización y generación de métricas.
     """
 
     _model_cache = {}
-    _mask_generator_cache = {}
 
     @staticmethod
     def _get_model(checkpoint_path, device):
@@ -430,6 +458,7 @@ class SAM2Analyzer:
 
         if cache_key not in SAM2Analyzer._model_cache:
             enable_runtime_optimizations()
+            clear_torch_memory()
 
             sam2_model = build_sam2(
                 model_cfg,
@@ -443,27 +472,17 @@ class SAM2Analyzer:
         return SAM2Analyzer._model_cache[cache_key]
 
     @staticmethod
-    def _get_mask_generator(sam2_model, mask_generator_params):
-        params_key = json.dumps(
-            mask_generator_params,
-            sort_keys=True,
-            default=str,
+    def _build_mask_generator(sam2_model, mask_generator_params):
+        """
+        Crea un generador nuevo por análisis.
+
+        No se cachea el mask generator para evitar acumulación de memoria
+        cuando el usuario cambia entre perfiles y modos de ejecución.
+        """
+        return SAM2AutomaticMaskGenerator(
+            model=sam2_model,
+            **mask_generator_params,
         )
-
-        cache_key = (
-            id(sam2_model),
-            params_key,
-        )
-
-        if cache_key not in SAM2Analyzer._mask_generator_cache:
-            SAM2Analyzer._mask_generator_cache[cache_key] = (
-                SAM2AutomaticMaskGenerator(
-                    model=sam2_model,
-                    **mask_generator_params,
-                )
-            )
-
-        return SAM2Analyzer._mask_generator_cache[cache_key]
 
     @staticmethod
     def _build_runtime_parameters(profile, parameters):
@@ -485,6 +504,151 @@ class SAM2Analyzer:
         return mask_generator_params, filter_params
 
     @staticmethod
+    def _build_memory_attempts(requested_max_image_size, points_per_batch):
+        """
+        Define intentos de ejecución ante errores de memoria.
+
+        El primer intento usa el valor solicitado. Los siguientes reducen
+        resolución y batch para intentar completar el análisis.
+        """
+        requested_max_image_size = int(requested_max_image_size)
+        points_per_batch = int(points_per_batch)
+
+        candidates = [
+            {
+                "max_image_size": requested_max_image_size,
+                "points_per_batch": points_per_batch,
+            },
+            {
+                "max_image_size": min(requested_max_image_size, 600),
+                "points_per_batch": min(points_per_batch, 4),
+            },
+            {
+                "max_image_size": min(requested_max_image_size, 500),
+                "points_per_batch": min(points_per_batch, 2),
+            },
+        ]
+
+        unique_attempts = []
+        seen = set()
+
+        for candidate in candidates:
+            key = (
+                candidate["max_image_size"],
+                candidate["points_per_batch"],
+            )
+
+            if key not in seen:
+                unique_attempts.append(candidate)
+                seen.add(key)
+
+        return unique_attempts
+
+    @staticmethod
+    def _generate_masks_with_memory_recovery(
+        image_rgb,
+        sam2_model,
+        mask_generator_params,
+        requested_max_image_size,
+        original_width,
+        original_height,
+        device,
+    ):
+        """
+        Ejecuta SAM 2 con recuperación ante CUDA out of memory.
+
+        Si el primer intento falla, reduce max_image_size y points_per_batch.
+        """
+        points_per_batch = int(mask_generator_params.get("points_per_batch", 64))
+
+        attempts = SAM2Analyzer._build_memory_attempts(
+            requested_max_image_size=requested_max_image_size,
+            points_per_batch=points_per_batch,
+        )
+
+        errors = []
+
+        for attempt_index, attempt in enumerate(attempts, start=1):
+            clear_torch_memory()
+
+            attempt_mask_generator_params = dict(mask_generator_params)
+            attempt_mask_generator_params["points_per_batch"] = attempt[
+                "points_per_batch"
+            ]
+
+            sam2_image_rgb, scale_ratio = resize_image_for_sam2(
+                image_rgb=image_rgb,
+                max_image_size=attempt["max_image_size"],
+            )
+
+            mask_generator = None
+
+            try:
+                mask_generator = SAM2Analyzer._build_mask_generator(
+                    sam2_model=sam2_model,
+                    mask_generator_params=attempt_mask_generator_params,
+                )
+
+                use_autocast = device.type == "cuda"
+                autocast_context = (
+                    torch.autocast("cuda", dtype=torch.float16)
+                    if use_autocast
+                    else contextlib.nullcontext()
+                )
+
+                with torch.inference_mode():
+                    with autocast_context:
+                        raw_masks = mask_generator.generate(
+                            sam2_image_rgb.copy()
+                        )
+
+                raw_masks = restore_masks_to_original_size(
+                    masks=raw_masks,
+                    original_width=original_width,
+                    original_height=original_height,
+                    scale_ratio=scale_ratio,
+                )
+
+                clear_torch_memory()
+
+                return {
+                    "raw_masks": raw_masks,
+                    "sam2_image_rgb": sam2_image_rgb,
+                    "scale_ratio": scale_ratio,
+                    "effective_max_image_size": attempt["max_image_size"],
+                    "effective_points_per_batch": attempt["points_per_batch"],
+                    "effective_mask_generator_params": attempt_mask_generator_params,
+                    "memory_fallback_used": attempt_index > 1,
+                    "memory_attempt_index": attempt_index,
+                    "memory_attempts": attempts,
+                    "memory_errors": errors,
+                }
+
+            except RuntimeError as error:
+                clear_torch_memory()
+
+                if not is_cuda_out_of_memory(error):
+                    raise
+
+                errors.append(
+                    {
+                        "attempt_index": attempt_index,
+                        "max_image_size": attempt["max_image_size"],
+                        "points_per_batch": attempt["points_per_batch"],
+                        "error": str(error),
+                    }
+                )
+
+            finally:
+                del mask_generator
+                clear_torch_memory()
+
+        raise RuntimeError(
+            "SAM 2 se quedó sin memoria GPU incluso usando fallback. "
+            "Prueba cerrar Flask, reiniciar la terminal o usar una imagen menor."
+        )
+
+    @staticmethod
     def analyze(
         image_path,
         output_dir,
@@ -499,12 +663,6 @@ class SAM2Analyzer:
     ):
         """
         Ejecuta SAM 2 sobre una micrografía y guarda los resultados.
-
-        Retorna un diccionario con:
-        - métricas
-        - ruta de imagen anotada
-        - ruta de figura resumen
-        - ruta de JSON de métricas
         """
         parameters = parameters or {}
 
@@ -522,12 +680,8 @@ class SAM2Analyzer:
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
         original_height, original_width = image_rgb.shape[:2]
-        max_image_size = int(parameters.get("max_image_size", 1200))
 
-        sam2_image_rgb, scale_ratio = resize_image_for_sam2(
-            image_rgb=image_rgb,
-            max_image_size=max_image_size,
-        )
+        requested_max_image_size = int(parameters.get("max_image_size", 700))
 
         selected_profile_name = parameters.get("sam2_profile", profile_name)
         selected_overlap_level = parameters.get("overlap_level", overlap_level)
@@ -549,46 +703,23 @@ class SAM2Analyzer:
             device=device,
         )
 
-        mask_generator = SAM2Analyzer._get_mask_generator(
+        generation_result = SAM2Analyzer._generate_masks_with_memory_recovery(
+            image_rgb=image_rgb,
             sam2_model=sam2_model,
             mask_generator_params=mask_generator_params,
-        )
-
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-
-        use_autocast = device.type == "cuda"
-        autocast_context = (
-            torch.autocast("cuda", dtype=torch.float16)
-            if use_autocast
-            else contextlib.nullcontext()
-        )
-
-        try:
-            with torch.inference_mode():
-                with autocast_context:
-                    raw_masks = mask_generator.generate(sam2_image_rgb.copy())
-        except RuntimeError as error:
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
-
-            error_message = str(error).lower()
-
-            if "out of memory" in error_message:
-                raise RuntimeError(
-                    "SAM 2 se quedó sin memoria GPU. "
-                    "Prueba con menor max_image_size, menor points_per_side "
-                    "o menor points_per_batch."
-                ) from error
-
-            raise
-
-        raw_masks = restore_masks_to_original_size(
-            masks=raw_masks,
+            requested_max_image_size=requested_max_image_size,
             original_width=original_width,
             original_height=original_height,
-            scale_ratio=scale_ratio,
+            device=device,
         )
+
+        raw_masks = generation_result["raw_masks"]
+        sam2_image_rgb = generation_result["sam2_image_rgb"]
+        scale_ratio = generation_result["scale_ratio"]
+
+        effective_mask_generator_params = generation_result[
+            "effective_mask_generator_params"
+        ]
 
         masks_after_legacy_filters = raw_masks
 
@@ -599,7 +730,9 @@ class SAM2Analyzer:
                 pixel_threshold=pixel_threshold,
             )
 
-        profile_min_area_px = int(mask_generator_params["min_mask_region_area"])
+        profile_min_area_px = int(
+            effective_mask_generator_params["min_mask_region_area"]
+        )
 
         if scale_ratio != 1.0:
             effective_min_area_px = int(
@@ -612,10 +745,10 @@ class SAM2Analyzer:
             masks=masks_after_legacy_filters,
             min_area_px=effective_min_area_px,
             max_area_px=parameters.get("max_area_px"),
-            max_area_factor=float(filter_params.get("max_area_factor", 8.0)),
-            min_circularity=float(filter_params.get("min_circularity", 0.72)),
-            max_aspect_ratio=float(filter_params.get("max_aspect_ratio", 1.30)),
-            min_solidity=float(filter_params.get("min_solidity", 0.90)),
+            max_area_factor=float(filter_params.get("max_area_factor", 12.0)),
+            min_circularity=float(filter_params.get("min_circularity", 0.45)),
+            max_aspect_ratio=float(filter_params.get("max_aspect_ratio", 1.80)),
+            min_solidity=float(filter_params.get("min_solidity", 0.80)),
             iou_threshold=float(filter_params.get("iou_threshold", 0.65)),
             mode=filter_params.get("mode", "filtered"),
         )
@@ -666,7 +799,8 @@ class SAM2Analyzer:
             "factor": factor,
             "step_number": step_number,
             "pixel_threshold": pixel_threshold,
-            "max_image_size": max_image_size,
+            "requested_max_image_size": requested_max_image_size,
+            "max_image_size": generation_result["effective_max_image_size"],
             "sam2_scale_ratio": scale_ratio,
             "original_image_size": [original_width, original_height],
             "sam2_runtime_image_size": [
@@ -676,8 +810,12 @@ class SAM2Analyzer:
             "profile_min_area_px": profile_min_area_px,
             "effective_min_area_px": effective_min_area_px,
             "filter_with_legacy_rules": filter_with_legacy_rules,
-            "mask_generator_params": mask_generator_params,
+            "mask_generator_params": effective_mask_generator_params,
             "filter_params": filter_params,
+            "memory_fallback_used": generation_result["memory_fallback_used"],
+            "memory_attempt_index": generation_result["memory_attempt_index"],
+            "memory_attempts": generation_result["memory_attempts"],
+            "memory_errors": generation_result["memory_errors"],
             "areas_nm2": measurement_result["areas_nm2"],
             "diagonals_nm": measurement_result["diagonals_nm"],
             "area_distribution": measurement_result["area_distribution"],
@@ -692,8 +830,7 @@ class SAM2Analyzer:
             encoding="utf-8",
         )
 
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
+        clear_torch_memory()
 
         return {
             "metrics": metrics,

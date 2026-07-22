@@ -8,12 +8,27 @@ SAM2_MODEL_CONFIG = {
 }
 
 
+# Filtro morfológico por defecto para el sistema final.
+#
+# Estos valores NO modifican SAM 2 internamente.
+# Son criterios de postprocesamiento aplicados a las máscaras generadas.
+#
+# La configuración se eligió después de pruebas diagnósticas comparando:
+# - filtro estricto original
+# - filtros moderados
+# - filtro flexible
+# - conteo por área
+#
+# La variante seleccionada corresponde al filtro "moderate_4":
+# - conserva una detección cercana al filtro flexible
+# - evita ser tan permisiva como el conteo por área
+# - mantiene mayor control de máscaras deformadas o demasiado grandes
 SAM2_FILTER_DEFAULTS = {
     "mode": "filtered",
-    "max_area_factor": 8.0,
-    "min_circularity": 0.72,
-    "max_aspect_ratio": 1.30,
-    "min_solidity": 0.90,
+    "max_area_factor": 12.0,
+    "min_circularity": 0.45,
+    "max_aspect_ratio": 1.80,
+    "min_solidity": 0.80,
     "iou_threshold": 0.65,
 }
 
@@ -128,24 +143,6 @@ SAM2_OVERLAP_PROFILES = {
 
 
 def normalize_profile_name(profile_name=None, overlap_level=None):
-    """
-    Normaliza el nombre del perfil solicitado.
-
-    Perfiles disponibles:
-    - default
-    - 0
-    - 15
-    - 30
-    - 45
-    - 60
-
-    También acepta valores como:
-    - "0%"
-    - "15%"
-    - "30%"
-    - "45%"
-    - "60%"
-    """
     selected_value = profile_name
 
     if selected_value is None or str(selected_value).strip() == "":
@@ -165,18 +162,10 @@ def normalize_profile_name(profile_name=None, overlap_level=None):
 
 
 def get_available_sam2_profiles():
-    """
-    Retorna los perfiles disponibles para SAM 2.
-    """
     return sorted(SAM2_OVERLAP_PROFILES.keys())
 
 
 def get_sam2_profile(profile_name=None, overlap_level=None):
-    """
-    Obtiene un perfil de configuración SAM 2.
-
-    Retorna una copia para evitar modificar los perfiles globales.
-    """
     normalized_name = normalize_profile_name(
         profile_name=profile_name,
         overlap_level=overlap_level,
@@ -184,6 +173,7 @@ def get_sam2_profile(profile_name=None, overlap_level=None):
 
     if normalized_name not in SAM2_OVERLAP_PROFILES:
         available_profiles = ", ".join(get_available_sam2_profiles())
+
         raise ValueError(
             f"SAM 2 profile '{normalized_name}' is not available. "
             f"Available profiles: {available_profiles}"
@@ -196,9 +186,6 @@ def get_sam2_profile(profile_name=None, overlap_level=None):
 
 
 def get_sam2_mask_generator_params(profile_name=None, overlap_level=None):
-    """
-    Obtiene únicamente los parámetros para SAM2AutomaticMaskGenerator.
-    """
     profile = get_sam2_profile(
         profile_name=profile_name,
         overlap_level=overlap_level,
@@ -208,9 +195,6 @@ def get_sam2_mask_generator_params(profile_name=None, overlap_level=None):
 
 
 def get_sam2_filter_params(profile_name=None, overlap_level=None):
-    """
-    Obtiene únicamente los parámetros del filtro morfológico.
-    """
     profile = get_sam2_profile(
         profile_name=profile_name,
         overlap_level=overlap_level,
